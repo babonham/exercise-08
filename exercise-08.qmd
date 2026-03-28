@@ -3,24 +3,204 @@ title: "exercise-08"
 format: html
 editor: visual
 ---
-
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
+Step 1: Load and explore data
 ```{r}
-1 + 1
+library(tidyverse)
+library(dplyr)
+library(skimr)
+f<- "https://raw.githubusercontent.com/difiore/ada-datasets/refs/heads/main/Street_et_al_2017.csv" #loads in my file
+d<- read_csv(f, col_names = TRUE) #reads in my dataset 
+glimpse(d) #brief look at the data
+skim(d) #gives me summary statistics
 ```
 
-You can add options to executable code like this
-
+Step 2:From this dataset, plot brain size (ECV) as a function of social group size (Group_size), longevity (Longevity), juvenile period length (Weaning), and reproductive lifespan (Repro_lifespan).
 ```{r}
-#| echo: false
-2 * 2
+library(ggplot2)
+library(cowplot) #for plot_grid()
+
+# Group Size
+p1<-ggplot(d, aes(x = Group_size, y = ECV)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "ECV vs Group Size")
+
+# Longevity
+p2<-ggplot(d, aes(x = Longevity, y = ECV)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "ECV vs Longevity")
+
+# Weaning
+p3<- ggplot(d, aes(x = Weaning, y = ECV)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "ECV vs Weaning")
+
+# Reproductive Lifespan
+p4<-ggplot(d, aes(x = Repro_lifespan, y = ECV)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "ECV vs Reproductive Lifespan")
+
+p5<-plot_grid(p1,p2,p3,p4, nrow = 2) #plots them together
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+Step 3: Derive by hand the ordinary least squares regression coefficients for ECV as a function of social group size.
+```{r}
+library(tidyr)
+
+d1 <- d %>%
+  drop_na(ECV, Group_size) #removes NAs 
+
+#define variables
+x <- d1$Group_size
+y <- d1$ECV
+
+#OLS equation
+x_mean <- mean(x)
+y_mean <- mean(y)
+
+beta1 <- sum((x - x_mean) * (y - y_mean)) / sum((x - x_mean)^2)
+beta0 <- y_mean - beta1 * x_mean
+
+beta0
+beta1
+```
+
+Step 4: Confirm that you get the same results using the lm() function.
+```{r}
+lm(ECV ~ Group_size, data = d1) #check results are the same
+```
+Results are the same!
+
+Step 5: Repeat the analysis above for three different major radiations of primates - “catarrhines”, “platyrrhines”, and “strepsirhines”) separately. These are stored in the variable Taxonomic_group. Do your regression coefficients differ among groups? How might you determine this?
+```{r}
+d2 <- d %>%
+  drop_na(ECV, Group_size, Taxonomic_group)
+
+model_cat <- lm(ECV ~ Group_size,
+                data = filter(d2, Taxonomic_group == "Catarrhini"))
+
+model_plat <- lm(ECV ~ Group_size,
+                 data = filter(d2, Taxonomic_group == "Platyrrhini"))
+
+model_strep <- lm(ECV ~ Group_size,
+                  data = filter(d2, Taxonomic_group == "Strepsirhini"))
+
+summary(model_cat)
+summary(model_plat)
+summary(model_strep)
+
+#checking for statistacal differences in slope
+model_interaction <- lm(ECV ~ Group_size * Taxonomic_group, data = d2)
+summary(model_interaction)
+```
+Regression coefficients differed among primate radiations. Catarrhines showed the weakest relationship between group size and brain size (β₁ = 1.146), while platyrrhines and strepsirhines showed stronger, more similar slopes (β₁ ≈ 1.96 and 1.84, respectively). These differences can be further tested using a linear model with an interaction term (ECV ~ Group_size × Taxonomic_group), where significant interaction terms indicate that slopes differ among groups. Once completed, we see that while they do initially appear different, they are not statistically different.
+
+Step 6: For your first regression of ECV on social group size, calculate the standard error for the slope coefficient, the 95% CI, and the p value associated with this coefficient by hand. Also extract this same information from the results of running the lm() function.
+```{r}
+n <- length(x)
+
+y2 <- beta0 + beta1 * x
+residuals <- y - y2
+
+SSE <- sum(residuals^2)          # Sum of squared errors
+residuals_var <- SSE / (n - 2)      # Residual variance
+SE_beta1 <- sqrt(residuals_var / sum((x - x_mean)^2))
+SE_beta1 #standard error of the slope
+
+#95% CI
+t_crit <- qt(0.975, df = n - 2)
+CI_lower <- beta1 - t_crit * SE_beta1
+CI_upper <- beta1 + t_crit * SE_beta1
+CI_lower
+CI_upper
+
+#p-value
+t_stat <- beta1 / SE_beta1
+p_value <- 2 * (1 - pt(abs(t_stat), df = n - 2))
+
+t_stat
+p_value
+
+#check using lm()
+model <- lm(ECV ~ Group_size, data = d1)
+summary(model)
+```
+Same results!
+
+Step 7: Use a permutation approach with 1000 permutations to generate a null sampling distribution for the slope coefficient. You can use either the quantile method (i.e., using quantiles from the actual permutation-based null sampling distribution) or a theory-based method (i.e., using the standard deviation of the permutation-based null sampling distribution as the estimate of the standard error, along with a normal or t distribution), or both, to calculate this p value.
+```{r}
+set.seed(123)
+
+d_perm <- d2 %>%
+  drop_na(ECV, Group_size)
+
+n_perm <- 1000
+perm_slopes <- numeric(n_perm)
+
+for (i in 1:n_perm) {
+  
+  y_perm <- sample(d_perm$ECV)  # permute response
+  
+  fit <- lm(y_perm ~ d_perm$Group_size)
+  perm_slopes[i] <- coef(fit)[2]
+}
+obs_model <- lm(ECV ~ Group_size, data = d_perm)
+obs_slope <- coef(obs_model)[2]
+obs_slope
+
+#quantile method
+p_value_perm <- mean(abs(perm_slopes) >= abs(obs_slope))
+p_value_perm
+
+#standard deviation method
+perm_se <- sd(perm_slopes)
+
+z <- obs_slope / perm_se
+p_value_norm <- 2 * (1 - pnorm(abs(z)))
+
+p_value_norm
+
+```
+What is it that you need to permute? You need to permute the ECV values relative to Group_size (i.e., randomly shuffle ECV among observations while keeping Group_size fixed). This breaks any real relationship between brain size and social group size under the null hypothesis.
+
+What is the p value associated with your original slope coefficient? Using the permutation test, the quantile-based p-value is 0 (no permuted slopes were as extreme as the observed slope). Using the standard deviation (normal approximation) method, the p-value is approximately 4.33 × 10⁻¹⁰.
+
+Step 8:Use bootstrapping to generate a 95% CI for your estimate of the slope coefficient using both the quantile method and the theory-based method (i.e., using the standard deviation of the bootstrapped sampling distribution as an estimate of the standard error).
+```{r}
+set.seed(123)
+
+d_boot <- d2 %>%
+  drop_na(ECV, Group_size)
+
+n <- nrow(d_boot)
+
+boot_slopes <- numeric(1000)
+
+for (i in 1:1000) {
+  
+  boot_data <- d_boot[sample(1:n, replace = TRUE), ]
+  
+  fit <- lm(ECV ~ Group_size, data = boot_data)
+  
+  boot_slopes[i] <- coef(fit)[2]
+}
+
+obs_model <- lm(ECV ~ Group_size, data = d_boot)
+obs_slope <- coef(obs_model)[2]
+obs_slope
+
+CI_quantile <- quantile(boot_slopes, c(0.025, 0.975))
+CI_quantile
+
+boot_se <- sd(boot_slopes)
+
+CI_lower <- obs_slope - 1.96 * boot_se
+CI_upper <- obs_slope + 1.96 * boot_se
+
+c(CI_lower, CI_upper)
+```
+Do these CIs suggest that your slope coefficient is different from zero?
+Yes, both bootstrap confidence intervals (quantile: 1.41–3.27 and theory-based: 1.52–3.40) do not include 0, indicating that the slope is significantly different from zero. This suggests a significant positive relationship between ECV and social group size.
